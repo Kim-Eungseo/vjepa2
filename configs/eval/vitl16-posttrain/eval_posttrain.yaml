@@ -1,0 +1,45 @@
+app: vjepa
+module: eval_post_train
+folder: .checkpoints/eval_posttrain/episode.vitl.256px.16f
+data:
+  dataset_type: EpisodeDataset
+  datasets:
+  - data/LiftPegUpright-v1
+  datasets_weights: null
+  batch_size: 4
+  crop_size: 256
+  patch_size: 16
+  dataset_fpcs:
+  - 16
+  tubelet_size: 2
+  num_workers: 4
+  pin_mem: true
+data_aug:
+  random_resize_aspect_ratio:
+  - 0.75
+  - 1.35
+  random_resize_scale:
+  - 0.3
+  - 1.0
+loss:
+  vicreg:
+    pooler_depth: 1
+meta:
+  dtype: bfloat16
+  read_checkpoint: .checkpoints/posttrain/episode.vitl.256px.16f/latest.pt
+  seed: 239
+  use_sdpa: true
+model:
+  model_name: vit_large
+  pred_depth: 12
+  pred_embed_dim: 384
+  pred_num_heads: 12
+  uniform_power: true
+  use_activation_checkpointing: true
+  use_mask_tokens: true
+  use_rope: true
+  zero_init_mask_tokens: true
+  use_silu: false
+  wide_silu: true
+eval:
+  max_batches: 200

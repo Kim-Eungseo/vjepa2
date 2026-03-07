@@ -87,4 +87,22 @@ def init_data(
             log_dir=log_dir,
         )
 
+    elif data.lower() == "episodedataset":
+        from src.datasets.episode_dataset import make_episode_dataset
+
+        dataset, data_loader, dist_sampler = make_episode_dataset(
+            data_paths=root_path,
+            batch_size=batch_size,
+            frames_per_clip=clip_len,
+            dataset_fpcs=dataset_fpcs,
+            num_clips=num_clips,
+            transform=transform,
+            collator=collator,
+            num_workers=num_workers,
+            pin_mem=pin_mem,
+            persistent_workers=persistent_workers,
+            world_size=world_size,
+            rank=rank,
+        )
+
     return (data_loader, dist_sampler)

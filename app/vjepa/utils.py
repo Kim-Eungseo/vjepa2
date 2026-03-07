@@ -90,41 +90,64 @@ def build_eval_args(
 def load_checkpoint(
     r_path,
     encoder,
-    predictor,
-    target_encoder,
-    opt,
-    scaler,
+    predictor=None,
+    target_encoder=None,
+    opt=None,
+    scaler=None,
     is_anneal=False,
+    vicreg_pooler=None,
 ):
     logger.info(f"Loading checkpoint from {r_path}")
     checkpoint = robust_checkpoint_loader(r_path, map_location=torch.device("cpu"))
 
     epoch = 0
     if not is_anneal:
-        epoch = checkpoint["epoch"]
+        epoch = checkpoint.get("epoch", 0)
 
     # -- loading encoder
     pretrained_dict = checkpoint["encoder"]
+    # Strip DDP 'module.' prefix if model is not wrapped in DDP
+    if not isinstance(encoder, torch.nn.parallel.DistributedDataParallel):
+        _has_module = any(k.startswith("module.") for k in pretrained_dict.keys())
+        if _has_module:
+            pretrained_dict = {k.replace("module.", "", 1): v for k, v in pretrained_dict.items()}
     msg = encoder.load_state_dict(pretrained_dict)
     logger.info(f"loaded pretrained encoder from epoch {epoch} with msg: {msg}")
 
     # -- loading predictor
-    pretrained_dict = checkpoint["predictor"]
-    msg = predictor.load_state_dict(pretrained_dict)
-    logger.info(f"loaded pretrained predictor from epoch {epoch} with msg: {msg}")
+    if predictor is not None and "predictor" in checkpoint:
+        pretrained_dict = checkpoint["predictor"]
+        if not isinstance(predictor, torch.nn.parallel.DistributedDataParallel):
+            _has_module = any(k.startswith("module.") for k in pretrained_dict.keys())
+            if _has_module:
+                pretrained_dict = {k.replace("module.", "", 1): v for k, v in pretrained_dict.items()}
+        msg = predictor.load_state_dict(pretrained_dict, strict=False)
+        logger.info(f"loaded pretrained predictor from epoch {epoch} with msg: {msg}")
 
     # -- loading target_encoder
-    if target_encoder is not None:
-        print(list(checkpoint.keys()))
+    if target_encoder is not None and "target_encoder" in checkpoint:
         pretrained_dict = checkpoint["target_encoder"]
+        if not isinstance(target_encoder, torch.nn.parallel.DistributedDataParallel):
+            _has_module = any(k.startswith("module.") for k in pretrained_dict.keys())
+            if _has_module:
+                pretrained_dict = {k.replace("module.", "", 1): v for k, v in pretrained_dict.items()}
         msg = target_encoder.load_state_dict(pretrained_dict)
         logger.info(f"loaded pretrained target encoder from epoch {epoch} with msg: {msg}")
 
+    # -- loading vicreg_pooler
+    if vicreg_pooler is not None and "vicreg_pooler" in checkpoint:
+        pretrained_dict = checkpoint["vicreg_pooler"]
+        msg = vicreg_pooler.load_state_dict(pretrained_dict)
+        logger.info(f"loaded pretrained vicreg_pooler from epoch {epoch} with msg: {msg}")
+    elif vicreg_pooler is not None:
+        logger.info("vicreg_pooler not found in checkpoint, using freshly initialized weights")
+
     # -- loading optimizer
-    opt.load_state_dict(checkpoint["opt"])
-    if scaler is not None:
-        scaler.load_state_dict(checkpoint["scaler"])
-    logger.info(f"loaded optimizers from epoch {epoch}")
+    if opt is not None and "opt" in checkpoint:
+        opt.load_state_dict(checkpoint["opt"])
+        if scaler is not None and checkpoint.get("scaler") is not None:
+            scaler.load_state_dict(checkpoint["scaler"])
+        logger.info(f"loaded optimizers from epoch {epoch}")
     logger.info(f"read-path: {r_path}")
     del checkpoint
 
@@ -207,15 +230,39 @@ def init_video_model(
     return encoder, predictor
 
 
+def init_vicreg_pooler(
+    device,
+    embed_dim,
+    num_heads,
+    depth=1,
+):
+    from src.models.attentive_pooler import AttentivePooler
+
+    pooler = AttentivePooler(
+        num_queries=1,
+        embed_dim=embed_dim,
+        num_heads=num_heads,
+        depth=depth,
+    )
+    pooler.to(device)
+
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    logger.info(f"VICReg pooler number of parameters: {count_parameters(pooler)}")
+
+    return pooler
+
+
 def init_opt(
     is_anneal,
     encoder,
-    predictor,
-    iterations_per_epoch,
-    start_lr,
-    ref_lr,
-    warmup,
-    num_epochs,
+    predictor=None,
+    iterations_per_epoch=None,
+    start_lr=None,
+    ref_lr=None,
+    warmup=None,
+    num_epochs=None,
     wd=1e-6,
     final_wd=1e-6,
     final_lr=0.0,
@@ -224,21 +271,41 @@ def init_opt(
     betas=(0.9, 0.999),
     eps=1e-8,
     zero_init_bias_wd=True,
+    vicreg_pooler=None,
+    freeze_encoder=False,
 ):
-    param_groups = [
-        {"params": (p for n, p in encoder.named_parameters() if ("bias" not in n) and (len(p.shape) != 1))},
-        {"params": (p for n, p in predictor.named_parameters() if ("bias" not in n) and (len(p.shape) != 1))},
-        {
-            "params": (p for n, p in encoder.named_parameters() if ("bias" in n) or (len(p.shape) == 1)),
-            "WD_exclude": zero_init_bias_wd,
-            "weight_decay": 0,
-        },
-        {
-            "params": (p for n, p in predictor.named_parameters() if ("bias" in n) or (len(p.shape) == 1)),
-            "WD_exclude": zero_init_bias_wd,
-            "weight_decay": 0,
-        },
-    ]
+    param_groups = []
+    if predictor is not None:
+        param_groups += [
+            {"params": (p for n, p in predictor.named_parameters() if ("bias" not in n) and (len(p.shape) != 1))},
+            {
+                "params": (p for n, p in predictor.named_parameters() if ("bias" in n) or (len(p.shape) == 1)),
+                "WD_exclude": zero_init_bias_wd,
+                "weight_decay": 0,
+            },
+        ]
+    if not freeze_encoder:
+        param_groups += [
+            {"params": (p for n, p in encoder.named_parameters() if ("bias" not in n) and (len(p.shape) != 1))},
+            {
+                "params": (p for n, p in encoder.named_parameters() if ("bias" in n) or (len(p.shape) == 1)),
+                "WD_exclude": zero_init_bias_wd,
+                "weight_decay": 0,
+            },
+        ]
+
+    # -- VICReg pooler parameters
+    if vicreg_pooler is not None:
+        param_groups.append(
+            {"params": (p for n, p in vicreg_pooler.named_parameters() if ("bias" not in n) and (len(p.shape) != 1))}
+        )
+        param_groups.append(
+            {
+                "params": (p for n, p in vicreg_pooler.named_parameters() if ("bias" in n) or (len(p.shape) == 1)),
+                "WD_exclude": zero_init_bias_wd,
+                "weight_decay": 0,
+            }
+        )
 
     optimizer = torch.optim.AdamW(param_groups, betas=betas, eps=eps)
     if not is_anneal:

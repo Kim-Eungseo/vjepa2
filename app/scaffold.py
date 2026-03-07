@@ -12,6 +12,6 @@ logger = logging.getLogger()
 
 
 def main(app, args, resume_preempt=False):
-
-    logger.info(f"Running pre-training of app: {app}")
-    return importlib.import_module(f"app.{app}.train").main(args=args, resume_preempt=resume_preempt)
+    module = args.get("module", "train")
+    logger.info(f"Running {module} of app: {app}")
+    return importlib.import_module(f"app.{app}.{module}").main(args=args, resume_preempt=resume_preempt)

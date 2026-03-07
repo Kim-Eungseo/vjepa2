@@ -373,7 +373,7 @@ python -m app.main_distributed \
   --account my_account --qos=my_qos
 ```
 
-### Postraining
+### Post-training (Action-Conditioned)
 
 Post-training of the action-conditioned model, starting from the pretrained VJEPA 2 backbone, also follows a similar interface, and can be run locally or distributed using [this config](configs/train/vitg16/droid-256px-8f.yaml).
 We post-train the model starting from the ViT-g/16 backbone.
@@ -391,6 +391,44 @@ python -m app.main --fname configs/train/vitg16/droid-256px-8f.yaml \
 python -m app.main_distributed \
   --fname configs/train/vitg16/droid-256px-8f.yaml
   --time 6000
+  --account my_account --qos=my_qos
+```
+
+### Post-training (JEPA + VICReg)
+
+Post-training continues JEPA masked prediction training from a pretrained checkpoint with optional [VICReg](https://arxiv.org/abs/2105.04906) regularization. Unlike pretraining from scratch, `post_train` **always requires a pretrained checkpoint** and will raise an error if none is found.
+
+#### Config setup
+
+Use [posttrain-resume-256px-16f.yaml](configs/train/vitl16/posttrain-resume-256px-16f.yaml) as a template.
+The key fields to configure:
+
+```yaml
+app: vjepa
+module: post_train              # routes to app/vjepa/post_train.py instead of train.py
+folder: /path/to/output         # where logs and new checkpoints are saved
+meta:
+  read_checkpoint: /path/to/pretrained/vitl.pt   # pretrained checkpoint to start from
+```
+
+**Checkpoint resolution order:**
+1. `{folder}/latest.pt` — if found, resumes an ongoing post-training run
+2. `meta.read_checkpoint` — starts a new post-training run from the specified pretrained checkpoint
+3. If neither exists, the script raises an error
+
+#### Local
+
+```
+python -m app.main --fname configs/train/vitl16/posttrain-resume-256px-16f.yaml \
+  --devices cuda:0 cuda:1 cuda:2 cuda:3
+```
+
+#### Distributed
+
+```
+python -m app.main_distributed \
+  --fname configs/train/vitl16/posttrain-resume-256px-16f.yaml \
+  --time 6000 \
   --account my_account --qos=my_qos
 ```
 

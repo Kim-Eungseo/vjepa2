@@ -272,6 +272,7 @@ def init_opt(
     eps=1e-8,
     zero_init_bias_wd=True,
     vicreg_pooler=None,
+    extra_modules=None,
     freeze_encoder=False,
 ):
     param_groups = []
@@ -294,7 +295,7 @@ def init_opt(
             },
         ]
 
-    # -- VICReg pooler parameters
+    # -- VICReg pooler parameters (legacy)
     if vicreg_pooler is not None:
         param_groups.append(
             {"params": (p for n, p in vicreg_pooler.named_parameters() if ("bias" not in n) and (len(p.shape) != 1))}
@@ -306,6 +307,20 @@ def init_opt(
                 "weight_decay": 0,
             }
         )
+
+    # -- Extra modules (e.g. projection heads)
+    if extra_modules is not None:
+        for module in extra_modules:
+            param_groups.append(
+                {"params": (p for n, p in module.named_parameters() if ("bias" not in n) and (len(p.shape) != 1))}
+            )
+            param_groups.append(
+                {
+                    "params": (p for n, p in module.named_parameters() if ("bias" in n) or (len(p.shape) == 1)),
+                    "WD_exclude": zero_init_bias_wd,
+                    "weight_decay": 0,
+                }
+            )
 
     optimizer = torch.optim.AdamW(param_groups, betas=betas, eps=eps)
     if not is_anneal:

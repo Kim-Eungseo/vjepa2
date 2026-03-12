@@ -1,0 +1,78 @@
+app: vjepa
+nodes: 1
+tasks_per_node: 8
+cpus_per_task: 16
+mem_per_gpu: 220G
+folder: /your_folder/disentangle/vitl.maniskill.256px.16f
+data:
+  dataset_type: maniskill_pair
+  datasets:
+  - /data/datasets/PickCube-v1
+  # - /data/datasets/LiftPegUpright-v1
+  # - /data/datasets/StackCube-v1
+  datasets_weights: null
+  batch_size: 24
+  crop_size: 256
+  patch_size: 16
+  dataset_fpcs:
+  - 16
+  - 16
+  tubelet_size: 2
+  fps: null
+  num_workers: 8
+  persistent_workers: true
+  pin_mem: true
+  texture_dir: /home/ngseo/vjepa2/pairgen/maniskill/maniskill/texture-images
+  p_bg_augment: 0.8
+data_aug:
+  auto_augment: false
+  motion_shift: false
+  random_resize_aspect_ratio:
+  - 0.75
+  - 1.35
+  random_resize_scale:
+  - 0.3
+  - 1.0
+  reprob: 0.0
+loss:
+  disentangle:
+    proj_dim: 256
+    pooler_depth: 1
+    # Task head VICReg coefficients
+    task_inv_coeff: 1.0
+    task_std_coeff: 1.0
+    task_cov_coeff: 1.0
+    # Domain head VICReg coefficients
+    dom_inv_coeff: 1.0
+    dom_std_coeff: 1.0
+    dom_cov_coeff: 1.0
+    # Loss weights: L = L_task + alpha * L_dom + beta * L_sep
+    alpha: 1.0
+    beta: 1.0
+meta:
+  dtype: bfloat16
+  read_checkpoint: /home/ngseo/vjepa2/.checkpoints/pretrained/vitl.pt
+  save_every_freq: 50
+  seed: 239
+  use_sdpa: true
+model:
+  model_name: vit_large
+  pred_depth: 12
+  pred_embed_dim: 384
+  pred_num_heads: 12
+  uniform_power: true
+  use_activation_checkpointing: true
+  use_mask_tokens: true
+  use_rope: true
+  zero_init_mask_tokens: true
+  freeze_encoder: true
+optimization:
+  epochs: 10
+  final_lr: 0.000525
+  final_weight_decay: 0.04
+  ipe: 300
+  ipe_scale: 1.25
+  lr: 0.000525
+  start_lr: 0.0001
+  warmup: 40
+  weight_decay: 0.04

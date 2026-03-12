@@ -5,6 +5,8 @@
 
 from logging import getLogger
 
+import torch
+
 _GLOBAL_SEED = 0
 logger = getLogger()
 
@@ -38,6 +40,9 @@ def init_data(
     persistent_workers=False,
     deterministic=True,
     log_dir=None,
+    # maniskill_pair 전용
+    texture_dir="",
+    p_bg_augment=0.8,
 ):
     if data.lower() == "imagenet":
         from src.datasets.imagenet1k import make_imagenet1k
@@ -103,6 +108,34 @@ def init_data(
             persistent_workers=persistent_workers,
             world_size=world_size,
             rank=rank,
+        )
+
+    elif data.lower() == "maniskill_pair":
+        from src.datasets.maniskill_pair_dataset import ManiSkillPairDataset
+
+        dataset = ManiSkillPairDataset(
+            root_paths=root_path,
+            fpc=max(dataset_fpcs),
+            transform=transform,
+            texture_dir=texture_dir,
+            p_bg_augment=p_bg_augment,
+        )
+        dist_sampler = torch.utils.data.distributed.DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=training,
+            drop_last=True,
+        )
+        data_loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=batch_size,
+            sampler=dist_sampler,
+            num_workers=num_workers,
+            pin_memory=pin_mem,
+            persistent_workers=persistent_workers and num_workers > 0,
+            collate_fn=collator,
+            drop_last=True,
         )
 
     return (data_loader, dist_sampler)

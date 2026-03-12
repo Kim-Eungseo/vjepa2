@@ -10,23 +10,60 @@ class PairCollator(object):
     """
     Collator for positive-pair contrastive learning.
 
-    Expects each sample from the dataset to contain at least 2 clips
-    (buffer = [clip1, clip2, ...]), e.g. via num_clips=2 in VideoDataset.
+    두 가지 입력 포맷을 지원한다:
 
-    Returns a list of (clip1_batch, clip2_batch) tuples, one per unique
-    frames_per_clip value in the batch.
+    1. VideoDataset / EpisodeDataset 포맷 (기존):
+       sample = (buffer, label, clip_indices)
+       buffer = [clip1, clip2, ...]
+       clip_indices[-1] 길이로 fpc를 판별해 그룹핑.
 
-    clip1_batch, clip2_batch: [B, C, T, H, W]
+    2. ManiSkillPairDataset 포맷 (신규):
+       sample = [(clip_A, clip_B), (clip_C, clip_D), ...]  # list of (view1, view2) pairs
+       clip shape: (C, T, H, W) float32 tensor
+
+    두 경우 모두 반환값:
+        list of (clip1_batch, clip2_batch)  # [B, C, T, H, W] × 2, per pair
     """
 
     def __init__(self, dataset_fpcs):
         self.dataset_fpcs = dataset_fpcs
 
     def __call__(self, batch):
-        # Group samples by frames_per_clip
+        # ManiSkillPairDataset: batch[0] is a dict {"task": [...], "dom": [...]}
+        if isinstance(batch[0], dict):
+            return self._collate_maniskill(batch)
+        return self._collate_video_dataset(batch)
+
+    def _collate_maniskill(self, batch):
+        """
+        ManiSkillPairDataset 포맷 collation.
+
+        batch[i] = {"task": [(clip_A, clip_B), ...], "dom": [(clip_E, clip_F), ...]}
+        반환:
+        {
+            "task": [(stack_A, stack_B), ...],   # (B, C, T, H, W) × 2
+            "dom":  [(stack_E, stack_F), ...],   # (B, C, T, H, W) × 2
+        }
+        """
+        def stack_pairs(key):
+            n_pairs = len(batch[0][key])
+            result = []
+            for pair_idx in range(n_pairs):
+                v1 = torch.stack([item[key][pair_idx][0] for item in batch])
+                v2 = torch.stack([item[key][pair_idx][1] for item in batch])
+                result.append((v1, v2))
+            return result
+
+        return {"task": stack_pairs("task"), "dom": stack_pairs("dom")}
+
+    def _collate_video_dataset(self, batch):
+        """
+        VideoDataset / EpisodeDataset 포맷 collation (기존 동작).
+
+        sample = (buffer, label, clip_indices)
+        """
         filtered_batches = {fpc: [] for fpc in self.dataset_fpcs}
         for sample in batch:
-            # sample = (buffer, label, clip_indices)
             # clip_indices[-1] has length = frames_per_clip
             fpc = len(sample[-1][-1])
             filtered_batches[fpc].append(sample)

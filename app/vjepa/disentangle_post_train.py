@@ -113,6 +113,8 @@ def main(args, resume_preempt=False):
     dataset_paths = cfgs_data.get("datasets", [])
     datasets_weights = cfgs_data.get("datasets_weights")
     dataset_fpcs = cfgs_data.get("dataset_fpcs")
+    texture_dir = cfgs_data.get("texture_dir", "")
+    p_bg_augment = cfgs_data.get("p_bg_augment", 0.8)
     max_num_frames = max(dataset_fpcs)
     if datasets_weights is not None:
         assert len(datasets_weights) == len(dataset_paths), "Must have one sampling weight specified for each dataset"
@@ -336,6 +338,8 @@ def main(args, resume_preempt=False):
         num_workers=num_workers,
         pin_mem=pin_mem,
         log_dir=None,
+        texture_dir=texture_dir,
+        p_bg_augment=p_bg_augment,
     )
     try:
         _dlen = len(unsupervised_loader)
@@ -473,15 +477,26 @@ def main(args, resume_preempt=False):
                         logger.warning(f"Exceeded max retries ({NUM_RETRIES}) when loading data. Skipping batch.")
                         raise e
 
-            # sample = list of (clip1_batch, clip2_batch) per fpc
+            # sample 포맷에 따라 분기:
+            #   maniskill_pair: {"task": [(v1,v2),...], "dom": [(v1,v2),...]}
+            #   legacy:         [(clip1_batch, clip2_batch), ...]
             def load_pairs():
-                all_clip1, all_clip2 = [], []
-                for clip1_batch, clip2_batch in sample:
-                    all_clip1.append(clip1_batch.to(device, non_blocking=True))
-                    all_clip2.append(clip2_batch.to(device, non_blocking=True))
-                return all_clip1, all_clip2
+                if isinstance(sample, dict):
+                    # task pairs: same segment, different domain
+                    task_c1 = [p[0].to(device, non_blocking=True) for p in sample["task"]]
+                    task_c2 = [p[1].to(device, non_blocking=True) for p in sample["task"]]
+                    # dom pairs: different segment, same domain
+                    dom_c1 = [p[0].to(device, non_blocking=True) for p in sample["dom"]]
+                    dom_c2 = [p[1].to(device, non_blocking=True) for p in sample["dom"]]
+                    return task_c1, task_c2, dom_c1, dom_c2
+                else:
+                    all_clip1, all_clip2 = [], []
+                    for clip1_batch, clip2_batch in sample:
+                        all_clip1.append(clip1_batch.to(device, non_blocking=True))
+                        all_clip2.append(clip2_batch.to(device, non_blocking=True))
+                    return all_clip1, all_clip2, None, None
 
-            clips1, clips2 = load_pairs()
+            task_clips1, task_clips2, dom_clips1, dom_clips2 = load_pairs()
             data_elapsed_time_ms = (time.time() - itr_start_time) * 1000.0
 
             if sync_gc and (itr + 1) % GARBAGE_COLLECT_ITR_FREQ == 0:
@@ -501,29 +516,46 @@ def main(args, resume_preempt=False):
 
                 # Step 1. Forward
                 with torch.amp.autocast("cuda", dtype=dtype, enabled=mixed_precision):
-                    h1_list = forward_encoder(clips1)  # list of [B, N, D]
-                    h2_list = forward_encoder(clips2)  # list of [B, N, D]
+                    # task pairs: same segment, different domain  → task_head 학습
+                    h_task1_list = forward_encoder(task_clips1)  # list of [B, N, D]
+                    h_task2_list = forward_encoder(task_clips2)
+
+                    is_disentangled = dom_clips1 is not None
+                    if is_disentangled:
+                        # dom pairs: different segment, same domain → domain_head 학습
+                        h_dom1_list = forward_encoder(dom_clips1)
+                        h_dom2_list = forward_encoder(dom_clips2)
 
                     l_task_total = 0
                     l_dom_total = 0
                     l_sep_total = 0
                     n = 0
-                    for h1, h2 in zip(h1_list, h2_list):
-                        # Dual-head forward
-                        z_task1 = task_head(h1)    # [B, d]
-                        z_task2 = task_head(h2)    # [B, d]
-                        z_dom1 = domain_head(h1)   # [B, d]
-                        z_dom2 = domain_head(h2)   # [B, d]
-
-                        # VICReg losses per head
+                    for i, (ht1, ht2) in enumerate(zip(h_task1_list, h_task2_list)):
+                        # task head: same segment, different domain → invariant to domain
+                        z_task1 = task_head(ht1)   # [B, d]
+                        z_task2 = task_head(ht2)   # [B, d]
                         task_dict = task_vicreg_fn(z_task1, z_task2)
-                        dom_dict = dom_vicreg_fn(z_dom1, z_dom2)
-
-                        # Separation loss (both views)
-                        l_sep = sep_loss_fn(z_task1, z_dom1) + sep_loss_fn(z_task2, z_dom2)
-
                         l_task_total += task_dict["loss"]
-                        l_dom_total += dom_dict["loss"]
+
+                        if is_disentangled:
+                            # domain head: different segment, same domain → invariant to task
+                            hd1, hd2 = h_dom1_list[i], h_dom2_list[i]
+                            z_dom1 = domain_head(hd1)  # [B, d]
+                            z_dom2 = domain_head(hd2)  # [B, d]
+                            dom_dict = dom_vicreg_fn(z_dom1, z_dom2)
+                            l_dom_total += dom_dict["loss"]
+
+                            # sep loss: task view에 두 헤드를 동시에 통과시켜 decorrelate
+                            z_dom_sep = domain_head(ht1)
+                            l_sep = sep_loss_fn(z_task1, z_dom_sep)
+                        else:
+                            # legacy: 두 헤드 모두 같은 pair 사용
+                            z_dom1 = domain_head(ht1)
+                            z_dom2 = domain_head(ht2)
+                            dom_dict = dom_vicreg_fn(z_dom1, z_dom2)
+                            l_dom_total += dom_dict["loss"]
+                            l_sep = sep_loss_fn(z_task1, z_dom1) + sep_loss_fn(z_task2, z_dom2)
+
                         l_sep_total += l_sep
                         n += 1
 

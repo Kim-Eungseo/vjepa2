@@ -1,0 +1,106 @@
+{
+    "0": {
+        "name": "bright_warm",
+        "ambient_light": [
+            0.6,
+            0.55,
+            0.3
+        ],
+        "directional_light_color": [
+            1.2,
+            1.1,
+            0.6
+        ]
+    },
+    "1": {
+        "name": "green_tint",
+        "ambient_light": [
+            0.15,
+            0.4,
+            0.15
+        ],
+        "directional_light_color": [
+            0.4,
+            1.0,
+            0.4
+        ]
+    },
+    "2": {
+        "name": "pink_tint",
+        "ambient_light": [
+            0.5,
+            0.1,
+            0.25
+        ],
+        "directional_light_color": [
+            1.2,
+            0.3,
+            0.6
+        ]
+    },
+    "3": {
+        "name": "blue_purple",
+        "ambient_light": [
+            0.1,
+            0.1,
+            0.45
+        ],
+        "directional_light_color": [
+            0.3,
+            0.3,
+            1.1
+        ]
+    },
+    "4": {
+        "name": "cyan_teal",
+        "ambient_light": [
+            0.1,
+            0.4,
+            0.4
+        ],
+        "directional_light_color": [
+            0.3,
+            1.0,
+            0.95
+        ]
+    },
+    "5": {
+        "name": "warm_sunset",
+        "ambient_light": [
+            0.55,
+            0.25,
+            0.08
+        ],
+        "directional_light_color": [
+            1.2,
+            0.5,
+            0.15
+        ]
+    },
+    "6": {
+        "name": "very_dim",
+        "ambient_light": [
+            0.06,
+            0.06,
+            0.06
+        ],
+        "directional_light_color": [
+            0.2,
+            0.2,
+            0.2
+        ]
+    },
+    "7": {
+        "name": "overexposed",
+        "ambient_light": [
+            0.8,
+            0.8,
+            0.8
+        ],
+        "directional_light_color": [
+            1.5,
+            1.5,
+            1.5
+        ]
+    }
+}
